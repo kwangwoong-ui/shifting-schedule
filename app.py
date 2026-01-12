@@ -2,125 +2,112 @@ import streamlit as st
 import math
 
 # 1. 초기 설정
-st.set_page_config(page_title="현장 근무 관리 마스터", layout="centered")
-st.title("📋 인터리빙 지능형 순환 시스템")
+st.set_page_config(page_title="현장 근무 관리 도구", layout="centered")
+st.title("📋 부스 이름 순환 배정 시스템")
 
-# 마스터 ID 정의 (A~L 12명 기준 예시)
+# 2. 세션 상태 (명단 및 성함 고정)
 if 'main_queue' not in st.session_state:
-    st.session_state.main_queue = [chr(i) for i in range(ord('A'), ord('M'))] # A~L
+    st.session_state.main_queue = [chr(i) for i in range(ord('A'), ord('L'))] # A~K
 if 'name_map' not in st.session_state:
     st.session_state.name_map = {uid: uid for uid in st.session_state.main_queue}
-if 'shift_offset' not in st.session_state:
-    st.session_state.shift_offset = 0
+if 'shift_count' not in st.session_state:
+    st.session_state.shift_count = 0
 
-# --- 2. 사이드바: 운영 설정 ---
+# --- 3. 사이드바: 설정 및 성함 수정 ---
 with st.sidebar:
     st.header("⚙️ 운영 설정")
-    mode = st.radio("🔄 운영 모드", ["정규 4교대 (N명당 1명 휴식)", "밀어내기 (전체 중 1명 휴식)"])
-    all_in_mode = st.toggle("🚀 전부 투입 (휴식 없음)", value=False)
+    mode = st.radio("🔄 운영 모드", ["정규 4교대", "밀어내기 (1명 휴식)"])
     
     st.divider()
-    st.subheader("👤 이름 수정")
+    st.subheader("👤 근무자 성함 (순서 고정)")
     for uid in st.session_state.main_queue:
-        st.session_state.name_map[uid] = st.text_input(f"슬롯 {uid}", value=st.session_state.name_map[uid], key=f"edit_{uid}")
+        st.session_state.name_map[uid] = st.text_input(f"슬롯 {uid}", value=st.session_state.name_map[uid], key=f"nm_{uid}")
 
     st.divider()
-    st.subheader("📍 부스 선택")
+    st.subheader("📍 운영 부스 선택")
     BOOTHS_MASTER = ["감독", "자동"] + [str(i) for i in range(1, 29)]
     selected_booths = []
     for b in BOOTHS_MASTER:
         if st.checkbox(b, value=(b in BOOTHS_MASTER[:10]), key=f"bth_{b}"):
             selected_booths.append(b)
 
-# --- 3. 핵심 로직: 인터리빙 및 부스 매핑 ---
-def get_processed_queue(is_push_mode):
-    base_q = st.session_state.main_queue
-    if not is_push_mode:
-        return base_q # 4교대는 정방향
+# --- 4. 배정 로직: 이름 고정, 부스 라벨 순환 ---
+def get_display_lines(current_mode, count):
+    all_uids = st.session_state.main_queue
+    all_names = [st.session_state.name_map[u] for u in all_uids]
+    booth_pool = selected_booths.copy()
     
-    # [핵심] 밀어내기 전환 시 세로로 엮기 (A E B F C G D H...)
-    # 왼쪽 사람은 왼쪽, 오른쪽은 오른쪽에 있게 함
-    rows = [base_q[i:i+4] for i in range(0, len(base_q), 4)]
-    interleaved = []
-    for col in range(4):
-        for row in rows:
-            if col < len(row):
-                interleaved.append(row[col])
-    return interleaved
+    lines = []
+    
+    if "4교대" in current_mode:
+        # 4명씩 조를 짜되, 이름(ABCD)은 고정하고 부스 이름표를 돌림
+        for i in range(0, len(all_names), 4):
+            group = all_names[i:i+4]
+            # 이 조에서 누가 쉴지 결정 (count에 따라 0, 1, 2, 3번째 인덱스)
+            rest_idx = count % 4
+            
+            # 사용할 부스 3개 추출 및 순환 (감독/자동/1 -> 자동/1/감독 -> 1/감독/자동)
+            g_booths_base = booth_pool[:3]
+            booth_pool = booth_pool[3:]
+            while len(g_booths_base) < 3: g_booths_base.append("X")
+            
+            # 부스 이름표 돌리기 로직
+            b_offset = count % 3
+            rolled_booths = g_booths_base[b_offset:] + g_booths_base[:b_offset]
+            
+            # 실제 배치 (휴식자는 건너뛰고 부스 이름표 붙이기)
+            mapping = []
+            b_idx = 0
+            for j in range(4):
+                if j == rest_idx:
+                    continue # 휴식자는 부스 이름표를 붙이지 않음 (미표기)
+                if b_idx < len(rolled_booths):
+                    mapping.append(rolled_booths[b_idx])
+                    b_idx += 1
+            
+            lines.append(f"🔸 {'/'.join(mapping)} | {' '.join(group)}")
+            
+    else:
+        # 밀어내기: 전체 인원에서 1명만 휴식, 나머지 부스 순환
+        rest_idx = count % len(all_names)
+        
+        # 부스 이름표 돌리기
+        b_offset = count % len(booth_pool) if booth_pool else 0
+        rolled_booths = booth_pool[b_offset:] + booth_pool[:b_offset]
+        
+        mapping = []
+        b_idx = 0
+        for i in range(len(all_names)):
+            if i == rest_idx: continue
+            if b_idx < len(rolled_booths):
+                mapping.append(rolled_booths[b_idx])
+                b_idx += 1
+        
+        lines.append(f"🔸 {'/'.join(mapping)} | {' '.join(all_names)}")
+        
+    return lines
 
-# --- 4. 실시간 진단 문구 ---
-st.subheader("📊 실시간 근무 진단")
-total_people = len(st.session_state.main_queue)
-n_shift = 4
-
-if "밀어내기" in mode:
-    # 밀어내기는 전체 중 1명만 휴식 (전부 투입 시 0명)
-    n_rest = 0 if all_in_mode else 1
-    rec_booths = total_people - n_rest
+# --- 5. 실시간 진단 및 출력 ---
+st.subheader("📊 근무 진단")
+num_p = len(st.session_state.main_queue)
+if "4교대" in mode:
+    rec_b = (num_p // 4) * 3 + (num_p % 4 if num_p % 4 > 0 else 0)
 else:
-    # 4교대는 조별로 1명씩 휴식
-    num_groups = math.ceil(total_people / n_shift)
-    n_rest = 0 if all_in_mode else num_groups
-    rec_booths = total_people - n_rest
+    rec_b = num_p - 1
 
-st.info(f"💡 **{mode} 적용:** 현재 {total_people}명 투입 중이며, **적정 부스 개수는 {rec_booths}개**입니다.")
+st.info(f"💡 **{mode} 적용:** 적정 부스 개수는 **{rec_b}개**입니다. (현재 선택: {len(selected_booths)}개)")
 
-# --- 5. 배치표 생성 및 실행 ---
-if st.button("🔄 다음 교대 진행 (순서 및 부스 유지)", use_container_width=True):
-    # 내부 큐 회전 (4교대 기준 1칸씩)
-    q = st.session_state.main_queue
-    st.session_state.main_queue = q[1:] + q[:1]
+if st.button("🔄 다음 교대 (부스 이름표 갱신)", use_container_width=True):
+    st.session_state.shift_count += 1
     st.rerun()
 
 st.divider()
-st.subheader("📍 현재 근무 배치표")
+st.subheader("📍 현재 근무 배치 (이름 고정)")
+display_results = get_display_lines(mode, st.session_state.shift_count)
+for res in display_results:
+    st.markdown(f"#### `{res}`")
 
-# 현재 모드에 따른 큐 가공
-current_queue = get_processed_queue("밀어내기" in mode)
-current_names = [st.session_state.name_map[u] for u in current_queue]
-temp_booths = selected_booths.copy()
-
-res_display = []
-
-if "밀어내기" in mode:
-    # 밀어내기: 맨 앞 한 명만 휴식, 나머지는 순서대로 부스 점유
-    if all_in_mode:
-        workers = current_names
-        rester = "없음"
-    else:
-        rester = current_names[0]
-        workers = current_names[1:]
-    
-    # 부스 매핑 (왼쪽 우선순위 유지)
-    assigned_booths = temp_booths[:len(workers)]
-    res_display.append(f"🔸 {'/'.join(assigned_booths)} | {' '.join(workers)}")
-    st.markdown(f"#### {res_display[0]}")
-    if not all_in_mode: st.success(f"☕ 휴식: {rester}")
-
-else:
-    # 4교대: 4명씩 조를 짜서 첫 번째 사람 휴식
-    for i in range(0, len(current_names), n_shift):
-        group = current_names[i:i+n_shift]
-        if all_in_mode:
-            workers = group
-            rester = "없음"
-            g_booths = temp_booths[:4]
-            temp_booths = temp_booths[4:]
-        else:
-            rester = group[0]
-            workers = group[1:]
-            g_booths = temp_booths[:3]
-            temp_booths = temp_booths[3:]
-        
-        while len(g_booths) < (4 if all_in_mode else 3): g_booths.append("X")
-        
-        line = f"🔸 {'/'.join(g_booths)} | {' '.join(workers)}"
-        if not all_in_mode: line += f" (휴식: {rester})"
-        res_display.append(line)
-        st.markdown(f"#### {line}")
-
-# --- 6. 카카오톡 보고용 ---
 st.divider()
 st.subheader("📱 카카오톡 보고용")
-kakao_text = f"📢 [{mode} 현황]\n" + "\n".join(res_display)
-st.text_area("내용 복사:", value=kakao_text, height=150)
+kakao_text = f"📢 [{mode} 현황]\n" + "\n".join(display_results)
+st.text_area("복사하기:", value=kakao_text, height=150)
