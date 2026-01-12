@@ -1,110 +1,137 @@
 import streamlit as st
 import math
 
-# 1. 페이지 및 데이터 초기화
+# 1. 페이지 설정 및 제목
 st.set_page_config(page_title="현장 근무 스마트 관리", layout="centered")
 st.title("📋 지능형 근무 배정 시스템")
 
-# 마스터 데이터 정의
+# 2. 마스터 데이터 정의 (순서 절대 고정)
 REG_NAMES = [chr(i) for i in range(ord('A'), ord('K'))] # A~J (10명)
 SUP_NAMES = [f"지원{i}" for i in range(1, 11)]         # 지원1~10 (10명)
 BOOTHS_MASTER = ["감독", "자동"] + [str(i) for i in range(1, 11)] + [str(i) for i in range(15, 29)]
 
+# 3. 데이터 저장소 및 수동 조작용 세션 초기화
 if 'staff_db' not in st.session_state:
     db = {}
     for name in REG_NAMES: db[name] = {"type": "고정", "work_units": 0}
     for name in SUP_NAMES: db[name] = {"type": "지원", "work_units": 0}
     st.session_state.staff_db = db
 
-# --- 2. 사이드바 설정 (정렬 보장) ---
+if 'final_result_text' not in st.session_state:
+    st.session_state.final_result_text = ""
+
+# --- 4. 사이드바: 설정 및 인원 체크 ---
 with st.sidebar:
-    st.header("⚙️ 설정창")
-    n_shift = st.selectbox("교대수(N) 선택", [2, 3, 4, 5, 6], index=2)
-    all_in_mode = st.toggle("전부 투입 (휴식 인원 없음)", value=False)
+    st.header("⚙️ 실시간 현장 설정")
     
-    # N+1 법칙: N교대 시 한 그룹당 인원은 N명, 부스는 N-1개
-    group_booth_count = n_shift - 1
-    ppl_per_group = n_shift 
+    # [교대수 및 모드 설정]
+    n_shift = st.selectbox("교대수(N) 선택", [2, 3, 4, 5, 6], index=2) # 4교대 기본
+    all_in_mode = st.toggle("전부 투입 모드", value=False)
+    
+    # 규칙: N교대 시 부스 그룹은 N-1개, 인원은 N명
+    group_size = n_shift if all_in_mode else (n_shift - 1)
+    ppl_per_group = n_shift
     
     st.divider()
+
+    # [인원 선택] - A~J, 지원1~10 순서 고정
     selected_staff = []
-    st.subheader("👥 고정 근무자 (A~J)")
+    st.subheader("👥 인원 선택")
     for name in REG_NAMES:
         if st.checkbox(name, value=True, key=f"r_{name}"): selected_staff.append(name)
-            
-    st.subheader("🏢 지원 부서 (1~10)")
     for name in SUP_NAMES:
         if st.checkbox(name, value=False, key=f"s_{name}"): selected_staff.append(name)
 
     st.divider()
+
+    # [부스 선택] - 번호 순서 고정
     selected_booths = []
     st.subheader("📍 부스 선택")
     for b_name in BOOTHS_MASTER:
         if st.checkbox(b_name, value=(b_name in BOOTHS_MASTER[:9]), key=f"b_{b_name}"):
             selected_booths.append(b_name)
 
-# --- 3. 핵심 배정 알고리즘 ---
-def generate_rotation():
-    if not selected_booths or not selected_staff:
-        return "❌ 부스와 근무자를 선택해주세요.", None
+# --- 5. 현황 진단 및 미리보기 가이드 ---
+st.subheader("📊 근무 투입 현황 진단")
+num_staff = len(selected_staff)
+if num_staff > 0:
+    # 현재 인원으로 만들 수 있는 최대 그룹 수와 필요한 부스 계산
+    possible_groups = num_staff // n_shift
+    extra_people = num_staff % n_shift
+    required_booths = possible_groups * (n_shift - 1)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("투입 가능 인원", f"{num_staff}명")
+        st.write(f"✅ **{n_shift}교대** 기준: **{possible_groups}개 조** 편성 가능")
+    with col2:
+        st.metric("적정 부스 개수", f"{required_booths}개")
+        st.write(f"현재 선택된 부스: **{len(selected_booths)}개**")
 
-    # [휴식 순번 로직] 근무 포인트가 높은 순서(오래 일한 순)로 정렬
-    sorted_by_work = sorted(selected_staff, key=lambda x: st.session_state.staff_db[x]['work_units'], reverse=True)
+    # 안내 문구 로직
+    if extra_people > 0:
+        st.warning(f"⚠️ **인원 남음:** 현재 {extra_people}명이 어느 조에도 속하지 못합니다. 인원을 추가하거나 '전부 투입'을 고려하세요.")
+    if len(selected_booths) > required_booths:
+        st.error(f"🚨 **부스 과다:** 인원 대비 부스가 {len(selected_booths) - required_booths}개 많습니다. 일부 부스는 'X'로 표시됩니다.")
+    elif len(selected_booths) < required_booths:
+        st.info(f"ℹ️ **부스 부족:** 인원 대비 부스가 {required_booths - len(selected_booths)}개 부족합니다. 인원을 줄이거나 부스를 더 선택하세요.")
+    else:
+        st.success("✨ 인원과 부스 비율이 완벽하게 일치합니다!")
+else:
+    st.info("사이드바에서 근무자를 선택하면 배정 분석이 시작됩니다.")
+
+# --- 6. 배정 로직 ---
+def run_assignment():
+    if not selected_staff or not selected_booths: return [], []
     
-    # 휴식 인원 결정 (전부 투입 시 0명)
-    num_rest = 0 if all_in_mode else (len(selected_staff) // n_shift if n_shift > 1 else 0)
-    resters = sorted_by_work[:num_rest]
+    # 1. 휴식 순번 결정 (포인트 높은 순)
+    sorted_for_rest = sorted(selected_staff, key=lambda x: st.session_state.staff_db[x]['work_units'], reverse=True)
+    num_rest = 0 if all_in_mode else (len(selected_staff) // n_shift)
+    resters = sorted_for_rest[:num_rest]
+    working_pool = [p for p in selected_staff if p not in resters]
     
-    # 근무 투입 인원 (전부 투입 시 전원 포함)
-    workers = [p for p in selected_staff if p not in resters]
-    
-    # [우선순위 배치] 고정(A-J) 알파벳순 -> 지원부서 숫자순
-    def get_priority(name):
+    # 2. 배치 우선순위 (고정 A-J -> 지원 1-10)
+    def priority(name):
         if name in REG_NAMES: return (0, name)
         return (1, int(name.replace("지원", "")))
     
-    sorted_workers = sorted(workers, key=get_priority)
-    
-    # 전부 투입 시, 휴식 예정자들을 명단 마지막에 추가 (유령 부스 X에 배치하기 위함)
-    if all_in_mode:
-        sorted_resters = sorted(sorted_by_work[:len(selected_staff) // n_shift], key=get_priority)
-        # 이미 workers에 포함되어 있으므로 추가 정렬만 보장
-        sorted_workers = sorted(selected_staff, key=get_priority)
-
-    # 부스 그룹화 및 유령 부스(X) 처리
+    sorted_workers = sorted(working_pool, key=priority)
     sorted_active_booths = [b for b in BOOTHS_MASTER if b in selected_booths]
-    num_groups = math.ceil(len(sorted_workers) / ppl_per_group)
     
-    final_lines = []
+    num_groups = math.ceil(len(sorted_workers) / n_shift)
+    res_lines = []
+    
     for i in range(num_groups):
-        # 이번 그룹 부스 (N-1개)
-        g_booths = sorted_active_booths[i * group_booth_count : (i+1) * group_booth_count]
-        while len(g_booths) < group_booth_count:
-            g_booths.append("X") # 부족한 자리는 유령 부스 X 표시
-            
-        # 이번 그룹 인원 (N명)
-        g_workers = sorted_workers[i * ppl_per_group : (i+1) * ppl_per_group]
+        # 부스 그룹화 및 유령 부스(X)
+        g_booths = sorted_active_booths[i * (n_shift-1) : (i+1) * (n_shift-1)]
+        while len(g_booths) < (n_shift - 1): g_booths.append("X")
         
-        # 출력 형식: 부스/부스/부스 이름1 이름2 이름3 이름4
-        booth_label = "/".join(g_booths)
-        worker_str = " ".join(sorted(g_workers, key=get_priority))
-        final_lines.append(f"{booth_label} {worker_str}")
+        # 인원 배정 (N명)
+        g_workers = sorted_workers[i * n_shift : (i+1) * n_shift]
         
-    return None, (final_lines, resters)
+        line = f"{'/'.join(g_booths)} {' '.join(sorted(g_workers, key=priority))}"
+        res_lines.append(line)
+        
+    return res_lines, resters
 
-# --- 4. 화면 출력 및 데이터 갱신 ---
-if st.button("🔄 근무 스케줄 갱신", use_container_width=True):
-    error, result = generate_rotation()
-    if error:
-        st.error(error)
-    else:
-        st.session_state.display_lines = result[0]
-        # 포인트 업데이트: 쉰 사람은 0으로 초기화(다음 휴식 순번의 마지막이 됨)
+# --- 7. 메인 실행 및 수동 조작 ---
+st.divider()
+if st.button("🔄 근무 스케줄 자동 생성", use_container_width=True):
+    lines, rests = run_assignment()
+    if lines:
+        st.session_state.final_result_text = "\n".join(lines)
+        # 휴식 데이터 업데이트 (쉰 사람은 0으로 초기화하여 다음 순번 마지막으로 이동)
         for p in selected_staff:
-            if p in result[1]: st.session_state.staff_db[p]['work_units'] = 0
+            if p in rests: st.session_state.staff_db[p]['work_units'] = 0
             else: st.session_state.staff_db[p]['work_units'] += 1
 
-if 'display_lines' in st.session_state:
-    st.subheader("📍 현재 근무 배치 현황")
-    for line in st.session_state.display_lines:
-        st.markdown(f"#### `{line}`")
+# [수동 조작 및 결과 확인]
+if st.session_state.final_result_text:
+    st.subheader("📍 근무 배치 결과 (수정 가능)")
+    # 수동 편집이 가능하도록 text_area 사용
+    edited_result = st.text_area("결과가 마음에 들지 않으면 여기서 직접 수정하세요:", 
+                                 value=st.session_state.final_result_text, 
+                                 height=250)
+    st.session_state.final_result_text = edited_result
+    
+    st.success("위 텍스트 박스에서 수동으로 이름을 바꾸거나 부스를 조정할 수 있습니다.")
