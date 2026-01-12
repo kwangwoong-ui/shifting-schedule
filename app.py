@@ -1,86 +1,102 @@
 import streamlit as st
+import pandas as pd
 
-# 모바일 브라우저 최적화 설정
-st.set_page_config(page_title="현장 근무 관리", layout="centered")
+# 모바일 최적화 및 페이지 설정
+st.set_page_config(page_title="자동 교대 시스템", layout="centered")
 
-# --- 스타일 설정 ---
-st.markdown("""
-    <style>
-    .booth-card {
-        background-color: #ffffff;
-        border-radius: 12px;
-        padding: 15px;
-        margin-bottom: 12px;
-        border: 1px solid #e0e0e0;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
-    }
-    .booth-header {
-        font-size: 16px;
-        font-weight: bold;
-        color: #ff4b4b;
-        margin-bottom: 8px;
-    }
-    .staff-text {
-        font-size: 18px;
-        color: #2c3e50;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# --- 1. 글로벌 상태 관리 (핵심 로직용) ---
+if 'staff_db' not in st.session_state:
+    # 초기 직원 리스트 (사용자 취향에 맞게 수정 가능)
+    initial_names = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "주간2", "기동"]
+    # rest_score: 쉰 지 얼마나 됐는지 (높을수록 근무 중, 0이면 방금 쉼)
+    st.session_state.staff_db = {name: {"last_pos": None, "rest_score": i} for i, name in enumerate(initial_names)}
+if 'booth_list' not in st.session_state:
+    st.session_state.booth_list = ["감독/자동", "1번", "2번", "19/22번"]
 
-# --- 세션 상태 초기화 (데이터 보존) ---
-if 'master_schedule' not in st.session_state:
-    st.session_state.master_schedule = {
-        "08:50-10:10": "감독/자동/1: A, B, D, E\n2/19/22: C, H, G, F\n24: I(d조)",
-        "10:10-11:00": "자동/감독: A, B, E\n1/2: C, D, F\n22/19: H, G, I\n3/24: 조조, 기동, 기동"
-    }
-
-st.title("📱 현장 가변 근무표")
-
-# --- 1. [설정 메뉴] 고정 근무자 및 부스 편집 ---
+# --- 2. 사이드바: 실시간 인원/부스 관리 ---
 with st.sidebar:
-    st.header("⚙️ 근무 설정 편집")
-    st.info("여기서 수정한 내용은 아래 화면에 즉시 반영됩니다.")
+    st.header("⚙️ 실시간 현장 설정")
     
-    # 시간대 추가/삭제
-    new_slot = st.text_input("새 시간대 이름 (예: 13:30-16:00)")
-    if st.button("시간대 추가"):
-        if new_slot and new_slot not in st.session_state.master_schedule:
-            st.session_state.master_schedule[new_slot] = ""
-            st.rerun()
+    # 인원 추가/삭제 (지각, 조퇴 반영)
+    st.subheader("👥 인원 관리")
+    all_names = list(st.session_state.staff_db.keys())
+    active_staff = st.multiselect("현재 투입 가능 인원", all_names, default=all_names)
+    
+    new_name = st.text_input("신규 인원 추가")
+    if st.button("인원 추가") and new_name:
+        st.session_state.staff_db[new_name] = {"last_pos": None, "rest_score": 0}
+        st.rerun()
 
     st.divider()
     
-    # 현재 선택된 시간대의 부스/인원 편집
-    st.subheader("📝 현재 시간대 상세 편집")
-    edit_slot = st.selectbox("편집할 시간대", list(st.session_state.master_schedule.keys()))
+    # 부스 추가/삭제 (근무지 변경 반영)
+    st.subheader("🏢 부스 관리")
+    current_booths = st.text_area("운영 부스 목록 (줄바꿈으로 구분)", "\n".join(st.session_state.booth_list))
+    st.session_state.booth_list = current_booths.strip().split('\n')
+
+# --- 3. 핵심 자동 배치 로직 ---
+def generate_auto_schedule():
+    # 1. 쉬어야 할 인원수 계산
+    n_staff = len(active_staff)
+    n_booth = len(st.session_state.booth_list)
+    rest_needed = max(0, n_staff - n_booth)
     
-    content = st.text_area(
-        "부스 및 인원 입력 (형식: 부스번호: 인원1, 인원2)",
-        value=st.session_state.master_schedule[edit_slot],
-        height=200,
-        help="한 줄에 '부스번호: 이름, 이름' 형식으로 입력하세요."
-    )
-    st.session_state.master_schedule[edit_slot] = content
+    # 2. 가장 오래 일한 사람(rest_score 높은 순) 정렬
+    sorted_staff = sorted(active_staff, key=lambda x: st.session_state.staff_db[x]['rest_score'], reverse=True)
+    
+    # 3. 휴식자 선정
+    resters = sorted_staff[:rest_needed]
+    workers = sorted_staff[rest_needed:]
+    
+    # 4. 부스 배치 (이전 위치 보존 로직)
+    final_mapping = {}
+    remaining_booths = st.session_state.booth_list.copy()
+    unassigned_workers = workers.copy()
+    
+    # 원래 자리에 있던 사람 먼저 고정
+    for person in workers:
+        last_pos = st.session_state.staff_db[person]["last_pos"]
+        if last_pos in remaining_booths:
+            final_mapping[last_pos] = person
+            remaining_booths.remove(last_pos)
+            unassigned_workers.remove(person)
+            
+    # 빈 자리에 나머지 인원(복귀자 등) 순차 배치
+    for booth in remaining_booths:
+        if unassigned_workers:
+            p = unassigned_workers.pop(0)
+            final_mapping[booth] = p
+            st.session_state.staff_db[p]["last_pos"] = booth
 
-# --- 2. [메인 화면] 근무 현황 시각화 ---
-st.subheader("⏳ 실시간 배치 현황")
-display_slot = st.selectbox("보기 선택", list(st.session_state.master_schedule.keys()), key="display")
+    return final_mapping, resters
 
-# 데이터 파싱 및 출력
-raw_data = st.session_state.master_schedule[display_slot]
-if raw_data:
-    lines = raw_data.strip().split('\n')
-    for line in lines:
-        if ':' in line:
-            booth, staff = line.split(':', 1)
-            st.markdown(f"""
-                <div class="booth-card">
-                    <div class="booth-header">📍 부스 {booth.strip()}</div>
-                    <div class="staff-text">👤 {staff.strip()}</div>
-                </div>
-            """, unsafe_allow_html=True)
+# --- 4. 메인 화면 출력 ---
+st.title("🤖 자동 교대 관리")
+
+if st.button("🔄 다음 교대로 갱신 (자동 계산)", use_container_width=True):
+    # 점수 업데이트 (일한 사람은 점수 올리고, 쉰 사람은 0으로)
+    # 실제 배치 로직은 위 함수에서 처리
+    st.session_state.last_result, st.session_state.last_resters = generate_auto_schedule()
+    
+    # 점수 갱신
+    for name in active_staff:
+        if name in st.session_state.last_resters:
+            st.session_state.staff_db[name]['rest_score'] = 0
+        else:
+            st.session_state.staff_db[name]['rest_score'] += 1
+
+# 결과 표시
+if 'last_result' in st.session_state:
+    st.subheader("📍 현재 부스별 배치")
+    for booth, worker in st.session_state.last_result.items():
+        st.markdown(f"""
+            <div style="background-color:#f0f2f6; padding:15px; border-radius:10px; margin-bottom:10px; border-left: 5px solid #ff4b4b;">
+                <span style="font-weight:bold; color:#555;">{booth}</span> : 
+                <span style="font-size:18px; color:#222;">{worker}</span>
+            </div>
+        """, unsafe_allow_html=True)
+        
+    st.divider()
+    st.write(f"☕ **현재 휴식 보장:** {', '.join(st.session_state.last_resters) if st.session_state.last_resters else '없음'}")
 else:
-    st.warning("입력된 근무 데이터가 없습니다. 왼쪽 설정 메뉴에서 입력해주세요.")
-
-st.divider()
-st.caption("팁: 모바일에서는 왼쪽 상단 '>' 화살표를 눌러 설정 메뉴를 여세요.")
+    st.info("상단 버튼을 눌러 첫 교대를 생성하세요.")
