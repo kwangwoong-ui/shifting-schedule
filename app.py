@@ -1,78 +1,65 @@
 import streamlit as st
-import pandas as pd
+import math
 
 # 1. 페이지 설정
-st.set_page_config(page_title="근무 규모 계산기", layout="centered")
-st.title("🧮 운영 모드별 부스 계산기")
-st.caption("인원수만 입력하면 각 교대별 적정 부스 숫자를 즉시 계산합니다.")
+st.set_page_config(page_title="공항 근무 유령 인원 계산기", layout="centered")
+st.title("👻 유령 인원 기반 근무 배분 시스템")
+st.caption("잉여 인원에게 동일한 휴식을 보장하기 위해 '유령 슬롯'을 생성합니다.")
 
-# 2. 인원수 입력 (가장 크게 배치)
-num_p = st.number_input("🔢 현재 전체 투입 인원수를 입력하세요", min_value=1, max_value=100, value=12)
+# 2. 입력 설정
+col_in1, col_in2 = st.columns(2)
+with col_in1:
+    num_p = st.number_input("🔢 실 근무자 수 (명)", min_value=1, max_value=100, value=14)
+with col_in2:
+    shift_mode = st.selectbox("🔄 교대 방식 선택", [2, 3, 4, 5], index=3) # 기본 5교대
 
 st.divider()
 
-# 3. 계산 로직 함수
-def calculate_booths(n_total):
-    results = []
-    
-    # 교대 모드 정의 (N교대: N명당 1명 휴식)
-    modes = {
-        "2교대": 2,
-        "3교대": 3,
-        "4교대": 4,
-        "5교대": 5
-    }
-    
-    for label, n_shift in modes.items():
-        resters = n_total // n_shift  # 휴식 인원
-        booths = n_total - resters    # 근무 부스
-        rem = n_total % n_shift       # 나누어 떨어지지 않는 잔여 인원
+# 3. 유령 인원 및 조 편성 로직
+# 조의 개수 계산 (올림 처리)
+num_groups = math.ceil(num_p / shift_mode)
+# 전체 슬롯 개수
+total_slots = num_groups * shift_mode
+# 필요한 유령 인원 수
+num_ghosts = total_slots - num_p
+
+# 4. 시각적 조 편성 및 부스 계산
+st.subheader(f"📊 {shift_mode}교대 조 편성 현황 (유령 {num_ghosts}명 포함)")
+
+booth_count = 0
+for i in range(num_groups):
+    with st.expander(f"📍 제 {i+1}조 배분 현황", expanded=True):
+        cols = st.columns(shift_mode)
+        group_start = i * shift_mode
         
-        results.append({
-            "운영 모드": label,
-            "휴식 인원": f"{resters}명",
-            "오픈 부스": f"✨ {booths}개",
-            "비고": f"{resters}개조 운영" + (f" (잔여 {rem}명 포함)" if rem > 0 else "")
-        })
-    
-    # 밀어내기 (전체에서 1명만 휴식)
-    results.append({
-        "운영 모드": "밀어내기",
-        "휴식 인원": "1명",
-        "오픈 부스": f"✨ {max(0, n_total - 1)}개",
-        "비고": "전체 인원 순환 휴식"
-    })
-    
-    # 전부 투입 (휴식 없음)
-    results.append({
-        "운영 모드": "전부 투입",
-        "휴식 인원": "0명",
-        "오픈 부스": f"✨ {n_total}개",
-        "비고": "전원 근무 투입"
-    })
-    
-    return results
+        for j in range(shift_mode):
+            slot_idx = group_start + j
+            with cols[j]:
+                if j == 0: # 첫 번째 칸은 휴식 고정 (시각적 편의)
+                    st.error("휴식")
+                elif slot_idx < num_p:
+                    st.success(f"근무자")
+                    booth_count += 1
+                else:
+                    st.warning("유령")
+                    # 유령은 근무자가 아니므로 부스 카운트에서 제외
 
-# 4. 결과 출력
-if num_p > 0:
-    res_list = calculate_booths(num_p)
-    
-    # 주요 지표 (Metric) 시각화
-    st.subheader(f"📊 {num_p}명 투입 시 모드별 부스 현황")
-    
-    # 상단 3개 모드 강조
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric("4교대 시 부스", res_list[2]["오픈 부스"])
-    with c2:
-        st.metric("밀어내기 시 부스", res_list[4]["오픈 부스"])
-    with c3:
-        st.metric("전부 투입 시 부스", res_list[5]["오픈 부스"])
-    
-    st.divider()
-    
-    # 전체 비교표
-    df = pd.DataFrame(res_list)
-    st.table(df)
+# 5. 최종 결과 안내
+st.divider()
+st.subheader("🏁 최종 운영 결과")
 
-    st.info(f"💡 **관리자님 필독:**\n4교대 기준, {num_p}명 중 {num_p // 4}명이 쉬고 나머지 인원이 근무에 투입되어 총 {num_p - (num_p // 4)}개의 부스를 운영하게 됩니다.")
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.metric("실제 근무자", f"{num_p}명")
+with c2:
+    st.metric("생성된 유령", f"{num_ghosts}명")
+with c3:
+    st.metric("오픈 부스", f"{booth_count}개")
+
+st.info(f"""
+**💡 관리자 가이드 (감독/자동 부스 포함)**
+* 전체 **{num_groups}개 조**가 운영되며, 각 조당 1명씩 총 **{num_groups}명**의 휴식 자리가 보장됩니다.
+* 유령 인원은 실제 사람이 아니므로, 유령이 '근무' 위치에 배정된 부스는 열지 않습니다.
+* 유령이 '휴식' 위치에 배정되는 교대 타임에는 해당 조의 실 근무자 4명이 모두 근무에 투입됩니다. 
+* 결과적으로 **감독/자동을 포함하여 총 {booth_count}개의 부스**를 운영하시면 됩니다.
+""")
