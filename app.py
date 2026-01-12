@@ -1,139 +1,127 @@
 import streamlit as st
 import math
 
-# 모바일 최적화 및 레이아웃 설정
-st.set_page_config(page_title="현장 근무 스마트 관리", layout="centered")
+# 1. 페이지 설정 및 제목
+st.set_page_config(page_title="현장 근무 관리 시스템", layout="centered")
+st.title("📋 근무 배정 현황")
 
-# --- 1. 데이터 초기화 및 순서 강제 정의 ---
-# 고정 근무자 A~O (15명)
-REG_LIST = [chr(i) for i in range(ord('A'), ord('P'))] 
-# 지원 부서 1~10 (정렬을 위해 리스트 직접 생성)
-SUP_LIST = [f"지원{i}" for i in range(1, 11)]
-# 부스 마스터 순서 (감독 -> 자동 -> 1~28)
-ALL_BOOTHS = ["감독", "자동"] + [str(i) for i in range(1, 11)] + [str(i) for i in range(15, 29)]
+# 2. 고정 리스트 정의 (순서 강제 고정)
+REG_NAMES = [chr(i) for i in range(ord('A'), ord('P'))] # A~O (15명)
+SUP_NAMES = [f"지원{i}" for i in range(1, 11)]         # 지원1~10 (10명)
+BOOTHS_MASTER = ["감독", "자동"] + [str(i) for i in range(1, 11)] + [str(i) for i in range(15, 29)]
 
+# 3. 데이터 저장소 초기화
 if 'staff_db' not in st.session_state:
     db = {}
-    for name in REG_LIST: db[name] = {"type": "고정", "last_group": None, "work_units": 0}
-    for name in SUP_LIST: db[name] = {"type": "지원", "last_group": None, "work_units": 0}
+    for name in REG_NAMES: db[name] = {"type": "고정", "last_group": None}
+    for name in SUP_NAMES: db[name] = {"type": "지원", "last_group": None}
     st.session_state.staff_db = db
 
-# --- 2. 사이드바: 정렬된 레이아웃 ---
+# --- 4. 사이드바 (순서대로 출력) ---
 with st.sidebar:
-    st.header("⚙️ 실시간 현장 설정")
+    st.header("⚙️ 설정창")
     
-    selected_staff = []
+    # [교대수 설정]
+    n_shift = st.selectbox("교대수(N) 선택", [2, 3, 4, 5, 6], index=2)
+    # 규칙: N교대 시 부스 그룹 크기는 N-1, 배정 인원은 N명
+    group_size = n_shift - 1
+    ppl_per_group = n_shift
     
+    st.divider()
+
     # [인원 선택] - A~O 순서 고정
+    selected_staff = []
     st.subheader("👥 고정 근무자 (A~O)")
-    reg_cols = st.columns(3)
-    for i, name in enumerate(REG_LIST):
-        with reg_cols[i % 3]:
-            if st.checkbox(name, value=(i < 12), key=f"r_{name}"):
+    c1 = st.columns(3)
+    for i, name in enumerate(REG_NAMES):
+        with c1[i % 3]:
+            if st.checkbox(name, value=(i < 12), key=f"reg_{name}"):
                 selected_staff.append(name)
-            
-    # [지원 부서] - 1~10 순서 고정
+                
+    # [지원부서 선택] - 지원1~10 순서 고정
     st.subheader("🏢 지원 부서 (1~10)")
-    sup_cols = st.columns(2)
-    for i, name in enumerate(SUP_LIST):
-        with sup_cols[i % 2]:
-            if st.checkbox(name, value=False, key=f"s_{name}"):
+    c2 = st.columns(2)
+    for i, name in enumerate(SUP_NAMES):
+        with c2[i % 2]:
+            if st.checkbox(name, value=False, key=f"sup_{name}"):
                 selected_staff.append(name)
 
     st.divider()
 
     # [부스 선택] - 감독~28번 순서 고정
-    st.subheader("📍 운영 부스 선택")
-    chosen_booths = []
-    booth_cols = st.columns(3)
-    for i, b_name in enumerate(ALL_BOOTHS):
-        with booth_cols[i % 3]:
-            if st.checkbox(b_name, value=(i < 6), key=f"b_{b_name}"):
-                chosen_booths.append(b_name)
+    st.subheader("📍 부스 선택")
+    selected_booths = []
+    c3 = st.columns(3)
+    for i, b_name in enumerate(BOOTHS_MASTER):
+        with c3[i % 3]:
+            if st.checkbox(b_name, value=(i < 6), key=f"bth_{b_name}"):
+                selected_booths.append(b_name)
 
-    st.divider()
+# --- 5. 배정 로직 ---
+def generate_schedule():
+    if not selected_booths or not selected_staff:
+        return "❌ 부스와 근무자를 선택해주세요.", None
+
+    # 부스 그룹화 (선택된 부스들을 마스터 순서대로 정렬 후 N-1개씩 묶음)
+    sorted_booths = [b for b in BOOTHS_MASTER if b in selected_booths]
+    station_groups = [sorted_booths[i : i + group_size] for i in range(0, len(sorted_booths), group_size)]
     
-    # [교대 방식]
-    st.subheader("📏 교대수 설정")
-    n_shift = st.selectbox("교대수(N) 선택", [2, 3, 4, 5, 6], index=2)
-    # 교대 규칙: N교대는 (N-1)개 부스에 N명을 배정함
-    booth_n = n_shift - 1
-    ppl_per_group = n_shift
-    st.info(f"💡 {n_shift}교대: 부스 {booth_n}개당 {ppl_per_group}명 배정")
-
-# --- 3. 로직 함수: 진단 및 배치 ---
-def run_rotation():
-    if not chosen_booths: return "❌ 부스를 선택해주세요.", None
-    if not selected_staff: return "❌ 근무자를 선택해주세요.", None
-
-    num_groups = math.ceil(len(chosen_booths) / booth_n)
+    num_groups = len(station_groups)
     total_needed = num_groups * ppl_per_group
     
+    # 인원 부족 체크
     if len(selected_staff) < total_needed:
-        return f"⚠️ **인원 부족:** {total_needed}명이 필요합니다. (현재 {len(selected_staff)}명)", None
+        return f"⚠️ 인원 부족: {total_needed}명이 필요하지만 현재 {len(selected_staff)}명입니다.", None
 
-    # 1. 부스 그룹화 (선택된 순서가 아닌 마스터 리스트 순서로 정렬)
-    sorted_chosen_booths = [b for b in ALL_BOOTHS if b in chosen_booths]
-    station_groups = [sorted_chosen_booths[i:i + booth_n] for i in range(0, len(sorted_chosen_booths), booth_n)]
+    # 인원 우선순위 정렬 (고정 A~O -> 지원 1~10)
+    # 지원부서는 숫자로 정렬되도록 처리
+    def get_sort_key(name):
+        if name in REG_NAMES: return (0, name)
+        return (1, int(name.replace("지원", "")))
     
-    # 2. 인원 정렬 (고정 A-O 순 -> 지원 1-10 순)
-    workers_pool = sorted(selected_staff, key=lambda x: (
-        0 if st.session_state.staff_db[x]['type'] == '고정' else 1, 
-        x if st.session_state.staff_db[x]['type'] == '고정' else int(x.replace("지원", ""))
-    ))
+    pool = sorted(selected_staff, key=get_sort_key)
     
-    group_assignments = {i: [] for i in range(len(station_groups))}
-    remaining = workers_pool.copy()
+    # 그룹 배정
+    assignments = {i: [] for i in range(num_groups)}
+    remaining = pool.copy()
     
-    # 3. 그룹 배정 (이동 최소화)
-    for idx in range(len(station_groups)):
-        prev = [p for p in remaining if st.session_state.staff_db[p].get('last_group') == idx]
+    # [이동 최소화] 기존에 이 그룹번호에 있던 사람 우선 배정
+    for i in range(num_groups):
+        prev = [p for p in remaining if st.session_state.staff_db[p].get('last_group') == i]
         fill = min(len(prev), ppl_per_group)
-        group_assignments[idx].extend(prev[:fill])
+        assignments[i].extend(prev[:fill])
         for p in prev[:fill]: remaining.remove(p)
-            
-    for idx in range(len(station_groups)):
-        while len(group_assignments[idx]) < ppl_per_group and remaining:
+    
+    # [나머지 채우기]
+    for i in range(num_groups):
+        while len(assignments[i]) < ppl_per_group and remaining:
             p = remaining.pop(0)
-            group_assignments[idx].append(p)
-            st.session_state.staff_db[p]['last_group'] = idx
+            assignments[i].append(p)
+            st.session_state.staff_db[p]['last_group'] = i
 
-    # 4. 결과 생성 (내부 정렬 포함)
-    final_res = []
-    all_resters = []
-    for idx, members in group_assignments.items():
-        g_name = "/".join(station_groups[idx])
-        # 그룹 내 휴식자 선정
-        sorted_m = sorted(members, key=lambda x: st.session_state.staff_db[x]['work_units'], reverse=True)
-        rester = sorted_m[0]
-        # 근무자 알파벳/숫자 순 정렬 출력
-        current_workers = sorted([m for m in members if m != rester], key=lambda x: (
-            0 if st.session_state.staff_db[x]['type'] == '고정' else 1,
-            x if st.session_state.staff_db[x]['type'] == '고정' else int(x.replace("지원", ""))
-        ))
-        final_res.append(f"{g_name} {' '.join(current_workers)}")
-        all_resters.append(rester)
-            
-    return None, (final_res, all_resters)
+    # 결과 텍스트 생성 (부스그룹 이름들 + 인원 N명)
+    result_lines = []
+    for i in range(num_groups):
+        booth_path = "/".join(station_groups[i])
+        # 그룹 내 인원도 보기 좋게 정렬 (고정 우선)
+        group_members = sorted(assignments[i], key=get_sort_key)
+        result_lines.append(f"{booth_path} {' '.join(group_members)}")
+        
+    return None, result_lines
 
-# --- 4. 메인 화면 ---
-st.title("📋 현장 근무 통합 관리")
-
-if st.button("🔄 근무 스케줄 갱신", use_container_width=True):
-    err, result = run_rotation()
-    if err:
-        st.error(err)
+# --- 6. 메인 화면 출력 ---
+if st.button("🔄 근무 스케줄 갱신 / 생성", use_container_width=True):
+    error, results = generate_schedule()
+    if error:
+        st.error(error)
     else:
-        st.session_state.display_res = result[0]
-        st.session_state.display_rests = result[1]
-        for p in selected_staff:
-            if p in result[1]: st.session_state.staff_db[p]['work_units'] = 0
-            else: st.session_state.staff_db[p]['work_units'] += 1
+        st.session_state.final_display = results
 
-if 'display_res' in st.session_state:
+if 'final_display' in st.session_state:
     st.subheader("📍 현재 근무 배치")
-    for line in st.session_state.display_res:
+    # 관리자님이 원하신 형식: 부스이름 근무자1 근무자2 근무자3 근무자4
+    for line in st.session_state.final_display:
         st.markdown(f"#### `{line}`")
     
     st.divider()
-    st.caption(f"현재 휴식 중: {', '.join(st.session_state.display_rests)}")
+    st.caption("※ 이 화면에는 해당 그룹의 근무자와 휴식자가 모두 포함되어 있습니다.")
