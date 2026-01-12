@@ -2,64 +2,82 @@ import streamlit as st
 import math
 
 # 1. 페이지 설정
-st.set_page_config(page_title="공항 근무 유령 인원 계산기", layout="centered")
-st.title("👻 유령 인원 기반 근무 배분 시스템")
-st.caption("잉여 인원에게 동일한 휴식을 보장하기 위해 '유령 슬롯'을 생성합니다.")
+st.set_page_config(page_title="공항 근무 비교기", layout="wide")
+st.title("📊 근무 모드별 부스 개수 비교")
 
-# 2. 입력 설정
-col_in1, col_in2 = st.columns(2)
-with col_in1:
-    num_p = st.number_input("🔢 실 근무자 수 (명)", min_value=1, max_value=100, value=14)
-with col_in2:
-    shift_mode = st.selectbox("🔄 교대 방식 선택", [2, 3, 4, 5], index=3) # 기본 5교대
+# 2. 인원수 입력
+num_p = st.number_input("🔢 전체 투입 인원수를 입력하세요", min_value=1, max_value=100, value=14)
 
 st.divider()
 
-# 3. 유령 인원 및 조 편성 로직
-# 조의 개수 계산 (올림 처리)
-num_groups = math.ceil(num_p / shift_mode)
-# 전체 슬롯 개수
-total_slots = num_groups * shift_mode
-# 필요한 유령 인원 수
-num_ghosts = total_slots - num_p
+# 3. 전체 모드 한눈에 비교 (표 형태)
+st.subheader(f"💡 {num_p}명 투입 시 모드별 '감독/자동 포함' 부스 개수")
 
-# 4. 시각적 조 편성 및 부스 계산
-st.subheader(f"📊 {shift_mode}교대 조 편성 현황 (유령 {num_ghosts}명 포함)")
+def get_booth_count(n, s):
+    # n: 인원수, s: 교대수 (2, 3, 4, 5)
+    # 휴식 인원 = n // s
+    return n - (n // s)
 
-booth_count = 0
-for i in range(num_groups):
-    with st.expander(f"📍 제 {i+1}조 배분 현황", expanded=True):
-        cols = st.columns(shift_mode)
-        group_start = i * shift_mode
-        
-        for j in range(shift_mode):
-            slot_idx = group_start + j
-            with cols[j]:
-                if j == 0: # 첫 번째 칸은 휴식 고정 (시각적 편의)
-                    st.error("휴식")
-                elif slot_idx < num_p:
-                    st.success(f"근무자")
-                    booth_count += 1
-                else:
-                    st.warning("유령")
-                    # 유령은 근무자가 아니므로 부스 카운트에서 제외
+data = {
+    "구분": ["2교대", "3교대", "4교대", "5교대", "밀어내기", "전부투입"],
+    "오픈 부스 (감독/자동 포함)": [
+        f"{get_booth_count(num_p, 2)}개",
+        f"{get_booth_count(num_p, 3)}개",
+        f"{get_booth_count(num_p, 4)}개",
+        f"{get_booth_count(num_p, 5)}개",
+        f"{num_p - 1}개",
+        f"{num_p}개"
+    ],
+    "휴식 인원": [
+        f"{num_p // 2}명",
+        f"{num_p // 3}명",
+        f"{num_p // 4}명",
+        f"{num_p // 5}명",
+        "1명",
+        "0명"
+    ],
+    "잉여(유령)": [
+        f"{num_p % 2}명",
+        f"{num_p % 3}명",
+        f"{num_p % 4}명",
+        f"{num_p % 5}명",
+        "-",
+        "-"
+    ]
+}
 
-# 5. 최종 결과 안내
+st.table(data)
+
 st.divider()
-st.subheader("🏁 최종 운영 결과")
 
-c1, c2, c3 = st.columns(3)
-with c1:
-    st.metric("실제 근무자", f"{num_p}명")
-with c2:
-    st.metric("생성된 유령", f"{num_ghosts}명")
-with c3:
-    st.metric("오픈 부스", f"{booth_count}개")
+# 4. 선택한 교대의 '유령 조' 시각화 (예: 5교대)
+st.subheader("👻 유령 인원 조 편성 (5교대 기준 예시)")
 
-st.info(f"""
-**💡 관리자 가이드 (감독/자동 부스 포함)**
-* 전체 **{num_groups}개 조**가 운영되며, 각 조당 1명씩 총 **{num_groups}명**의 휴식 자리가 보장됩니다.
-* 유령 인원은 실제 사람이 아니므로, 유령이 '근무' 위치에 배정된 부스는 열지 않습니다.
-* 유령이 '휴식' 위치에 배정되는 교대 타임에는 해당 조의 실 근무자 4명이 모두 근무에 투입됩니다. 
-* 결과적으로 **감독/자동을 포함하여 총 {booth_count}개의 부스**를 운영하시면 됩니다.
-""")
+selected_shift = 5 # 관리자님 예시인 5교대 고정 혹은 선택 가능
+rem = num_p % selected_shift
+
+if rem == 0:
+    st.success("✅ 모든 조가 유령 없이 꽉 찼습니다.")
+else:
+    num_ghosts = selected_shift - rem
+    # 유령이 휴식 자리를 차지한다고 가정할 때의 구성
+    # 예: 14명 5교대 -> 잉여 4명 + 유령 1명
+    # 관리자님 요청 형식: 유령 근무자 근무자 근무자 근무자
+    ghost_line = ["👻 유령"] + ["👤 근무자"] * rem
+    
+    st.info(f"마지막 조(잉여 {rem}명)는 유령이 휴식 자리를 대신하여 아래와 같이 운영됩니다.")
+    
+    # 시각적 표기
+    st.error(" / ".join(ghost_line))
+    st.caption("※ '유령' 칸이 휴식 순번일 때는 실제 근무자 4명이 모두 투입됩니다.")
+
+st.divider()
+st.subheader("📱 카톡 보고용 요약")
+summary = f"""📢 [근무 운영 규모 안내]
+인원: {num_p}명 기준
+- 4교대: {get_booth_count(num_p, 4)}부스
+- 5교대: {get_booth_count(num_p, 5)}부스
+- 밀어내기: {num_p-1}부스
+- 전부투입: {num_p}부스
+(감독/자동 포함 숫자임)"""
+st.text_area("복사해서 사용하세요", value=summary, height=150)
