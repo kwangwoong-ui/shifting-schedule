@@ -32,7 +32,7 @@ for s in display_modes:
         "정규 조": f"{full_groups}개",
         "오픈 부스 (감독 자동 포함)": f"{reg_booths}개",
         "잉여 인원": f"{rem}명",
-        "잉여 포함 총 부스": f"{total_booths}개"
+        "잉여 포함 총 부스 (감독 자동 포함)": f"{total_booths}개"
     })
 
 # 7명 이상일 때만 밀어내기 표시
