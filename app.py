@@ -5,10 +5,10 @@ num_p = st.number_input("🔢 전체 투입 인원수", min_value=1, value=14)
 
 # 2. 부스 산출표
 st.subheader(f"📊 운영 모드별 부스 산출 ({num_p}명 기준)")
-modes = [2, 3, 4, 5]
+modes = [2, 3, 4, 5, 6] # 6교대 추가
 table_data = []
 
-# 교대제 계산
+# 교대제 계산 (2, 3, 4, 5, 6교대)
 for s in modes:
     full_groups = num_p // s
     rem = num_p % s
@@ -38,6 +38,7 @@ for s in modes:
     rem = num_p % s
     if rem > 0:
         ghosts = s - rem
+        # 휴식 자리를 포함한 X 표기 로직
         visual = ["X"] * ghosts + ["근무자"] * rem
         st.write(f"**{s}교대 (잉여 {rem}명):**")
         st.error(" / ".join(visual))
