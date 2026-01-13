@@ -29,7 +29,7 @@ for s in display_modes:
     rem = num_p % s
     booths = full_groups * (s - 1)
     
-    label = "2교대(맞교대)" if s == 2 else f"{s}교대"
+    label = "맞교대" if s == 2 else f"{s}교대"
     
     table_data.append({
         "운영 모드": label,
