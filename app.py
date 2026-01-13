@@ -2,13 +2,13 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 # 1. 페이지 설정
-st.set_page_config(page_title="공항 부스 산출기", layout="centered")
+st.set_page_config(page_title="공항 근무 규모 분석기", layout="centered")
 st.title("📊 모바일 최적화 부스 산출기")
 
 # 2. 인원 입력
 num_p = st.number_input("🔢 전체 투입 인원수", min_value=1, value=14)
 
-# 3. 행 표기 로직 결정 (관리자님 가이드 준수)
+# 3. 행 표기 로직 결정
 display_modes = []
 if num_p >= 2: display_modes.append(2)
 if num_p >= 3: display_modes.append(3)
@@ -32,18 +32,19 @@ if num_p >= 7:
 
 rows_html += f"<tr><td>전부투입</td><td>-</td><td>{num_p}개</td><td>-</td><td class='total-col'>{num_p}개</td></tr>"
 
-# 5. 모바일 최적화 CSS 및 HTML 조립
+# 5. [색상 대비 강화] 모바일 최적화 CSS 및 HTML
+# 배경색(#ffffff)과 글자색(#000000)을 명시적으로 고정하여 다크모드 대응
 html_content = f"""
 <!DOCTYPE html>
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body {{ font-family: sans-serif; margin: 0; padding: 0; }}
-        .mobile-table {{ width: 100%; border-collapse: collapse; font-size: 11px; table-layout: fixed; }}
-        .mobile-table th, .mobile-table td {{ border: 1px solid #ddd; padding: 10px 2px; text-align: center; word-break: keep-all; }}
-        .mobile-table th {{ background-color: #f1f3f5; font-weight: bold; }}
-        .total-col {{ background-color: #fff0f6; font-weight: bold; color: #d63384; }}
+        body {{ font-family: -apple-system, sans-serif; background-color: white; margin: 0; padding: 0; }}
+        .mobile-table {{ width: 100%; border-collapse: collapse; font-size: 11px; table-layout: fixed; background-color: white; }}
+        .mobile-table th, .mobile-table td {{ border: 1px solid #cccccc; padding: 12px 2px; text-align: center; word-break: keep-all; color: #000000 !important; }}
+        .mobile-table th {{ background-color: #f8f9fa; font-weight: bold; color: #333333 !important; }}
+        .total-col {{ background-color: #fff0f6 !important; font-weight: bold; color: #d63384 !important; }}
     </style>
 </head>
 <body>
@@ -65,9 +66,9 @@ html_content = f"""
 </html>
 """
 
-# 6. HTML 렌더링 (iframe 방식 사용으로 코드 노출 방지)
+# 6. HTML 렌더링
 st.subheader(f"📋 {num_p}명 기준 운영 모드 요약")
-components.html(html_content, height=400, scrolling=False)
+components.html(html_content, height=450, scrolling=False)
 
 # 7. X(잉여) 조 시각화
 st.divider()
